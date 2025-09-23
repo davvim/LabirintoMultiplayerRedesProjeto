@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Network Packet Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #181818; color: #fff; margin: 0; padding: 0; }
+    .container { max-width: 1100px; margin: 2rem auto; background: #222; border-radius: 8px; padding: 2rem; box-shadow: 0 0 12px #000; }
+    h1 { text-align: center; }
+    table { width: 100%; border-collapse: collapse; margin-top: 2rem; background: #222; }
+    th, td { padding: 0.5rem 0.7rem; border-bottom: 1px solid #333; text-align: left; }
+    th { background: #333; }
+    tr:last-child td { border-bottom: none; }
+    .chart { margin: 2rem 0; }
+  </style>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <h1>Network Packet Dashboard</h1>
+    <div class="chart">
+      <svg id="trafficChart" width="1000" height="200"></svg>
+    </div>
+    <table id="packetTable">
+      <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>Protocol</th>
+          <th>Source</th>
+          <th>Destination</th>
+          <th>Packet Size</th>
+          <th>Type</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <script>
+    async function fetchPackets() {
+      const res = await fetch('/packets');
+      return res.json();
+    }
+
+    function renderTable(packets) {
+      const tbody = document.querySelector('#packetTable tbody');
+      tbody.innerHTML = '';
+      packets.slice(-100).reverse().forEach(pkt => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${new Date(pkt.timestamp).toLocaleTimeString()}</td>
+          <td>${pkt.protocol || pkt.type}</td>
+          <td>${pkt.src || pkt.socketId}</td>
+          <td>${pkt.dst || 'server'}</td>
+          <td>${pkt.size}</td>
+          <td>${pkt.type}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderChart(packets) {
+      const svg = d3.select('#trafficChart');
+      svg.selectAll('*').remove();
+      const width = +svg.attr('width');
+      const height = +svg.attr('height');
+      // Group packets by minute
+      const now = Date.now();
+      const bins = Array(20).fill(0);
+      packets.forEach(pkt => {
+        const minAgo = Math.floor((now - pkt.timestamp) / 60000);
+        if (minAgo < 20 && minAgo >= 0) bins[19 - minAgo]++;
+      });
+      const x = d3.scaleLinear().domain([0, 19]).range([40, width-20]);
+      const y = d3.scaleLinear().domain([0, d3.max(bins) || 1]).range([height-30, 20]);
+      // Axis
+      svg.append('g').attr('transform',`translate(0,${height-30})`).call(d3.axisBottom(x).ticks(20).tickFormat(i => `${19-i}m ago`));
+      svg.append('g').attr('transform','translate(40,0)').call(d3.axisLeft(y));
+      // Bars
+      svg.selectAll('rect')
+        .data(bins)
+        .enter()
+        .append('rect')
+        .attr('x',(d,i)=>x(i)-10)
+        .attr('y',d=>y(d))
+        .attr('width',18)
+        .attr('height',d=>height-30-y(d))
+        .attr('fill','#38b000');
+    }
+
+    async function update() {
+      const packets = await fetchPackets();
+      renderTable(packets);
+      renderChart(packets);
+    }
+    setInterval(update, 1000);
+    update();
+  </script>
+</body>
+</html>
