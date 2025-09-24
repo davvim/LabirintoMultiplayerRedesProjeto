@@ -70,22 +70,27 @@ app.get('/', (req, res) => {
   res.send('Maze Game Server is running!');
 });
 
+let PACKET_COUNTER = 0;
+
 // Add a function to emit packet logs to all clients
-function emitPacketLog(type, data, socketId) {
+function emitPacketLog(type, data, socketId, latency=null) {
   const log = {
+    sequence: ++PACKET_COUNTER,
     timestamp: Date.now(),
     type,
     data,
     socketId,
-    protocol: 'WebSocket', // For in-app events, protocol is WebSocket
+    protocol: 'WebSocket',
     src: socketId,
     dst: 'server',
-    size: JSON.stringify(data).length
+    size: JSON.stringify(data).length,
+    latency
   };
   io.emit('packet', log);
   PACKET_LOG.push(log);
-  if (PACKET_LOG.length > 500) PACKET_LOG.shift(); // keep last 500
+  if (PACKET_LOG.length > 500) PACKET_LOG.shift();
 }
+
 
 // Serve dashboard HTML
 app.get('/dashboard', (req, res) => {
@@ -105,24 +110,33 @@ io.on('connection', (socket) => {
   io.emit('players', players);
   emitPacketLog('connect', { player: players[socket.id] }, socket.id);
 
-  socket.on('move', (dir) => {
-    const player = players[socket.id];
-    if (!player) return;
-    const { x, y } = player;
-    const cell = maze[y][x];
-    let nx = x, ny = y;
-    if (dir === 'up' && !cell.top) ny--;
-    if (dir === 'down' && !cell.bottom) ny++;
-    if (dir === 'left' && !cell.left) nx--;
-    if (dir === 'right' && !cell.right) nx++;
-    // Stay in bounds
-    if (nx >= 0 && nx < MAZE_WIDTH && ny >= 0 && ny < MAZE_HEIGHT) {
-      player.x = nx;
-      player.y = ny;
-      io.emit('players', players);
-      emitPacketLog('move', { dir, player: { ...player } }, socket.id);
-    }
-  });
+  socket.on('move', (msg) => {
+  const { dir, sentAt } = typeof msg === 'string' ? { dir: msg, sentAt: null } : msg;
+  let latency = sentAt ? Date.now() - sentAt : null;
+
+  // Se a latência for negativa, zera
+  if (latency !== null && latency < 0) latency = 0;
+
+  const player = players[socket.id];
+  if (!player) return;
+  const { x, y } = player;
+  const cell = maze[y][x];
+  let nx = x, ny = y;
+  if (dir === 'up' && !cell.top) ny--;
+  if (dir === 'down' && !cell.bottom) ny++;
+  if (dir === 'left' && !cell.left) nx--;
+  if (dir === 'right' && !cell.right) nx++;
+
+  if (nx >= 0 && nx < MAZE_WIDTH && ny >= 0 && ny < MAZE_HEIGHT) {
+    player.x = nx;
+    player.y = ny;
+    io.emit('players', players);
+  }
+
+  emitPacketLog('move', { dir, player: { ...player } }, socket.id, latency);
+});
+
+
 
   socket.on('chat', (msg) => {
     const chatMsg = {

@@ -154,7 +154,7 @@ function App() {
       if (e.key === 'ArrowLeft' || e.key === 'a') dir = 'left';
       if (e.key === 'ArrowRight' || e.key === 'd') dir = 'right';
       if (dir) {
-        socket.emit('move', dir);
+        socket.emit('move', { dir, sentAt: Date.now() });
         keyDownRef.current = true;
       }
     }
