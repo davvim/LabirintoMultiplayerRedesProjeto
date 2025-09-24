@@ -10,6 +10,7 @@ A university networking project: Multiplayer Web Maze Game with built-in network
 - Built-in network traffic logger and dashboard (`/dashboard`)
 - Easy deployment (local or cloud VPS)
 - Clean setup: only server + client needed
+- Optional P2P mode using WebRTC DataChannels (server used only for signaling)
 
 ---
 
@@ -33,7 +34,7 @@ cd client
 npm install
 ```
 
-### 3. Run the Server
+### 3. Run the Server (Signaling + Server Mode)
 ```
 cd client/server
 node index.js
@@ -48,7 +49,10 @@ npm run dev
 ```
 - The frontend runs on [http://localhost:5173](http://localhost:5173)
 - Open multiple browser tabs/windows at [http://localhost:5173](http://localhost:5173)
-- Each client is assigned a unique ID and can move/chat in the shared maze
+- On startup, choose a mode:
+  - "Server Mode (Socket.io)" = original server-authoritative gameplay
+  - "P2P Mode (WebRTC)" = peers connect directly using a DataChannel
+- For P2P, ensure both browsers use the same `room id` (e.g., `room1`).
 
 ---
 
@@ -81,6 +85,35 @@ npm run dev
 ## Notes
 - This repository is cleaned to the essentials: Node/Express Socket.io server and React client.
 - Experimental tools (e.g., external sniffers, Replit, WebRTC prototypes) have been removed. Future additions can be reintroduced as needed.
+
+---
+
+## P2P Mode (WebRTC)
+
+In P2P mode, the server acts only as a signaling server; once connected, game data (movement, chat, optional state sync) flows directly between browsers via a WebRTC DataChannel.
+
+### How it works
+- Signaling uses Socket.io events:
+  - `join_room` — peers join the same room id
+  - `webrtc-offer` / `webrtc-answer` — exchange SDP session descriptions
+  - `webrtc-ice` — exchange ICE candidates
+- After signaling completes, the DataChannel `game` opens and messages are exchanged directly between peers.
+
+### Try it locally
+1. Start the backend signaling server: `cd client/server && node index.js`
+2. Start the frontend: `cd client && npm run dev`
+3. Open two browser tabs at `http://localhost:5173`
+4. In both tabs, select P2P Mode, and keep the same `room id` (e.g., `room1`)
+5. Use arrow keys/WASD and chat — updates flow peer-to-peer
+
+### Server Mode vs P2P Mode
+- Server Mode (default behavior):
+  - The server maintains authoritative player positions
+  - Clients emit `move`/`chat` via Socket.io, the server rebroadcasts state
+- P2P Mode:
+  - The server only relays signaling messages
+  - After the WebRTC connection is established, peers send `move` and `chat` directly over the DataChannel
+  - The maze is fetched from `GET /maze` at startup
 
 ---
 

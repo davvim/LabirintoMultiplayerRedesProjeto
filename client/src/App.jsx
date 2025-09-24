@@ -117,9 +117,17 @@ function App() {
   const [selfId, setSelfId] = useState(null);
   const [logs, setLogs] = useState([]);
   const [chat, setChat] = useState([]);
+  // Mode state: 'server' (Socket.io authoritative) or 'p2p' (WebRTC DataChannel)
+  const [mode, setMode] = useState(null);
+  const [roomId, setRoomId] = useState('room1');
+  // WebRTC state
+  const pcRef = useRef(null);
+  const dataChannelRef = useRef(null);
   const keyDownRef = useRef(false);
 
+  // --- Socket.io server mode wiring ---
   useEffect(() => {
+    if (mode !== 'server') return;
     socket.on('connect', () => {
       setSelfId(socket.id);
     });
@@ -143,8 +151,9 @@ function App() {
       socket.off('packet');
       socket.off('chat');
     };
-  }, []);
+  }, [mode]);
 
+  // Keyboard controls
   useEffect(() => {
     function handleKey(e) {
       if (keyDownRef.current) return;
@@ -154,7 +163,17 @@ function App() {
       if (e.key === 'ArrowLeft' || e.key === 'a') dir = 'left';
       if (e.key === 'ArrowRight' || e.key === 'd') dir = 'right';
       if (dir) {
-        socket.emit('move', { dir, sentAt: Date.now() });
+        if (mode === 'server') {
+          socket.emit('move', { dir, sentAt: Date.now() });
+        } else if (mode === 'p2p' && dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
+          // In P2P mode, send movement over the DataChannel
+          dataChannelRef.current.send(JSON.stringify({ type: 'move', dir }));
+          // Apply locally as well for instant feedback
+          setPlayers(prev => {
+            const me = prev[selfId] || { id: selfId, x: 0, y: 0 };
+            return { ...prev, [selfId]: me };
+          });
+        }
         keyDownRef.current = true;
       }
     }
@@ -167,21 +186,144 @@ function App() {
       window.removeEventListener('keydown', handleKey);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, []);
+  }, [mode, selfId]);
 
   function handleSendChat(message) {
-    socket.emit('chat', message);
+    if (mode === 'server') {
+      socket.emit('chat', message);
+    } else if (mode === 'p2p' && dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
+      dataChannelRef.current.send(JSON.stringify({ type: 'chat', text: message }));
+      setChat(prev => [...prev, { id: selfId || 'me', text: message, time: Date.now() }]);
+    }
+  }
+
+  // --- P2P Mode: WebRTC Signaling + DataChannel ---
+  // This uses Socket.io only for signaling: join a room, exchange SDP (offer/answer) and ICE.
+  // Once the connection is established, game messages flow directly over the DataChannel.
+  async function startP2P() {
+    setMode('p2p');
+    // 1) Fetch maze from server (read-only)
+    const res = await fetch('http://localhost:3001/maze');
+    const { maze: mz, width, height } = await res.json();
+    setMaze(mz);
+    setMazeSize({ width, height });
+    // Initialize own player
+    const myId = socket.id || Math.random().toString(36).slice(2, 8);
+    setSelfId(myId);
+    setPlayers(prev => ({ ...prev, [myId]: { id: myId, x: 0, y: 0 } }));
+
+    // 2) Create RTCPeerConnection and DataChannel
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    pcRef.current = pc;
+    pc.onicecandidate = (e) => {
+      if (e.candidate) {
+        socket.emit('webrtc-ice', { roomId, candidate: e.candidate });
+      }
+    };
+    pc.ondatachannel = (ev) => {
+      // Receiving side
+      const ch = ev.channel;
+      dataChannelRef.current = ch;
+      ch.onmessage = onP2PMessage;
+      ch.onopen = () => console.log('P2P DataChannel open');
+      ch.onclose = () => console.log('P2P DataChannel closed');
+    };
+
+    // Create a channel proactively (caller side)
+    const dc = pc.createDataChannel('game');
+    dataChannelRef.current = dc;
+    dc.onmessage = onP2PMessage;
+    dc.onopen = () => console.log('P2P DataChannel open');
+    dc.onclose = () => console.log('P2P DataChannel closed');
+
+    // 3) Join a signaling room
+    socket.emit('join_room', roomId);
+
+    // 4) Handle signaling messages
+    socket.on('peer_joined', async ({ peerId }) => {
+      // We are the first; create and send an offer to the new peer
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit('webrtc-offer', { roomId, sdp: offer });
+    });
+    socket.on('webrtc-offer', async ({ from, sdp }) => {
+      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit('webrtc-answer', { roomId, sdp: answer });
+    });
+    socket.on('webrtc-answer', async ({ from, sdp }) => {
+      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    });
+    socket.on('webrtc-ice', async ({ from, candidate }) => {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.error('Error adding ICE candidate', err);
+      }
+    });
+  }
+
+  // Handle incoming DataChannel messages in P2P mode
+  function onP2PMessage(ev) {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'move') {
+      // Apply simple movement rules in the maze for the remote player
+      setPlayers(prev => {
+        const otherId = msg.id || 'peer';
+        const p = prev[otherId] || { id: otherId, x: 0, y: 0 };
+        const { x, y } = p;
+        if (!maze) return prev;
+        const cell = maze[y]?.[x];
+        if (!cell) return prev;
+        let nx = x, ny = y;
+        if (msg.dir === 'up' && !cell.top) ny--;
+        if (msg.dir === 'down' && !cell.bottom) ny++;
+        if (msg.dir === 'left' && !cell.left) nx--;
+        if (msg.dir === 'right' && !cell.right) nx++;
+        const updated = { ...prev, [otherId]: { ...p, x: nx, y: ny } };
+        return updated;
+      });
+    }
+    if (msg.type === 'chat') {
+      setChat(prev => [...prev, { id: 'peer', text: msg.text, time: Date.now() }]);
+    }
+    if (msg.type === 'state') {
+      // Full state sync (optional)
+      if (msg.players) setPlayers(msg.players);
+      if (msg.maze) setMaze(msg.maze);
+    }
+  }
+
+  async function startServerMode() {
+    setMode('server');
   }
 
   return (
     <div className="App">
       <h1>Multiplayer Web Maze Game</h1>
+      {!mode && (
+        <div style={{ marginBottom: 12 }}>
+          <h3>Select Mode</h3>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button onClick={startServerMode}>Server Mode (Socket.io)</button>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input value={roomId} onChange={e => setRoomId(e.target.value)} placeholder="room id" />
+              <button onClick={startP2P}>P2P Mode (WebRTC)</button>
+            </div>
+          </div>
+          <p style={{ maxWidth: 680 }}>
+            In P2P mode, the server is used only for signaling (SDP/ICE). Once connected, peers exchange
+            movement/chat directly via a WebRTC DataChannel.
+          </p>
+        </div>
+      )}
       {maze ? (
         <Maze maze={maze} width={mazeSize.width} height={mazeSize.height} players={players} selfId={selfId} />
       ) : (
         <p>Loading maze...</p>
       )}
-      <p>Use arrow keys or WASD to move. Green is you!</p>
+      <p>Use arrow keys or WASD to move. Green is you! {mode === 'p2p' ? 'P2P mode active.' : ''}</p>
       <ChatPanel chat={chat} onSend={handleSendChat} selfId={selfId} />
       <NetworkTrafficPanel logs={logs} selfId={selfId} />
     </div>

@@ -70,6 +70,11 @@ app.get('/', (req, res) => {
   res.send('Maze Game Server is running!');
 });
 
+// Expose the current maze to P2P clients (read-only)
+app.get('/maze', (req, res) => {
+  res.json({ maze, width: MAZE_WIDTH, height: MAZE_HEIGHT });
+});
+
 let PACKET_COUNTER = 0;
 
 // Add a function to emit packet logs to all clients
@@ -91,7 +96,6 @@ function emitPacketLog(type, data, socketId, latency=null) {
   if (PACKET_LOG.length > 500) PACKET_LOG.shift();
 }
 
-
 // Serve dashboard HTML
 app.get('/dashboard', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'dashboard.html'));
@@ -102,7 +106,27 @@ app.get('/packets', (req, res) => {
   res.json(PACKET_LOG);
 });
 
+// --- Socket.io: Signaling + Server Mode in one connection handler ---
+// Minimal WebRTC signaling (room-based) + existing authoritative server mode.
 io.on('connection', (socket) => {
+  // Signaling: join a room for P2P WebRTC
+  socket.on('join_room', (roomId) => {
+    socket.join(roomId);
+    socket.to(roomId).emit('peer_joined', { peerId: socket.id });
+  });
+
+  // Signaling: forward SDP and ICE between peers in the same room
+  socket.on('webrtc-offer', ({ roomId, sdp }) => {
+    socket.to(roomId).emit('webrtc-offer', { from: socket.id, sdp });
+  });
+  socket.on('webrtc-answer', ({ roomId, sdp }) => {
+    socket.to(roomId).emit('webrtc-answer', { from: socket.id, sdp });
+  });
+  socket.on('webrtc-ice', ({ roomId, candidate }) => {
+    socket.to(roomId).emit('webrtc-ice', { from: socket.id, candidate });
+  });
+
+  // --- Authoritative server mode events ---
   // Assign player to start position (0,0)
   players[socket.id] = { x: 0, y: 0, id: socket.id };
   // Send maze and all player positions
@@ -111,32 +135,30 @@ io.on('connection', (socket) => {
   emitPacketLog('connect', { player: players[socket.id] }, socket.id);
 
   socket.on('move', (msg) => {
-  const { dir, sentAt } = typeof msg === 'string' ? { dir: msg, sentAt: null } : msg;
-  let latency = sentAt ? Date.now() - sentAt : null;
+    const { dir, sentAt } = typeof msg === 'string' ? { dir: msg, sentAt: null } : msg;
+    let latency = sentAt ? Date.now() - sentAt : null;
 
-  // Se a latência for negativa, zera
-  if (latency !== null && latency < 0) latency = 0;
+    // Se a latência for negativa, zera
+    if (latency !== null && latency < 0) latency = 0;
 
-  const player = players[socket.id];
-  if (!player) return;
-  const { x, y } = player;
-  const cell = maze[y][x];
-  let nx = x, ny = y;
-  if (dir === 'up' && !cell.top) ny--;
-  if (dir === 'down' && !cell.bottom) ny++;
-  if (dir === 'left' && !cell.left) nx--;
-  if (dir === 'right' && !cell.right) nx++;
+    const player = players[socket.id];
+    if (!player) return;
+    const { x, y } = player;
+    const cell = maze[y][x];
+    let nx = x, ny = y;
+    if (dir === 'up' && !cell.top) ny--;
+    if (dir === 'down' && !cell.bottom) ny++;
+    if (dir === 'left' && !cell.left) nx--;
+    if (dir === 'right' && !cell.right) nx++;
 
-  if (nx >= 0 && nx < MAZE_WIDTH && ny >= 0 && ny < MAZE_HEIGHT) {
-    player.x = nx;
-    player.y = ny;
-    io.emit('players', players);
-  }
+    if (nx >= 0 && nx < MAZE_WIDTH && ny >= 0 && ny < MAZE_HEIGHT) {
+      player.x = nx;
+      player.y = ny;
+      io.emit('players', players);
+    }
 
-  emitPacketLog('move', { dir, player: { ...player } }, socket.id, latency);
-});
-
-
+    emitPacketLog('move', { dir, player: { ...player } }, socket.id, latency);
+  });
 
   socket.on('chat', (msg) => {
     const chatMsg = {
