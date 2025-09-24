@@ -1,0 +1,21 @@
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Runtime data
+*.pcap
+packets.csv
+packets.json
+client/server/packets.csv
+client/server/packets.json
+
+# Dependencies
+node_modules/
+
+# Environment variables
+.env

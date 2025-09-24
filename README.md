@@ -8,9 +8,8 @@ A university networking project: Multiplayer Web Maze Game with built-in network
 - Multiplayer maze game (Node.js + Express + Socket.io + React)
 - Real-time player movement and chat
 - Built-in network traffic logger and dashboard (`/dashboard`)
-- Python-based packet sniffer for deep inspection (Wireshark-compatible)
 - Easy deployment (local or cloud VPS)
-- (Optional) WebRTC mode for peer-to-peer networking
+- Clean setup: only server + client needed
 
 ---
 
@@ -30,7 +29,7 @@ npm install
 ```
 #### Frontend (React + Vite)
 ```
-cd ../
+cd client
 npm install
 ```
 
@@ -48,8 +47,6 @@ cd ../
 npm run dev
 ```
 - The frontend runs on [http://localhost:5173](http://localhost:5173)
-
-### 5. Connect Clients
 - Open multiple browser tabs/windows at [http://localhost:5173](http://localhost:5173)
 - Each client is assigned a unique ID and can move/chat in the shared maze
 
@@ -61,32 +58,6 @@ npm run dev
 - All WebSocket events (connect, move, chat, disconnect) are logged in memory and visible at [http://localhost:3001/dashboard](http://localhost:3001/dashboard)
 - Table and D3.js chart auto-update in real time
 - For exporting, you can extend the `/packets` endpoint to download logs as JSON/CSV
-
-### Option 2: Python Packet Sniffer (Wireshark-Compatible)
-- Use `network_sniffer.py` (requires Python + Scapy + Npcap)
-- Captures all TCP/UDP/WebSocket packets on port 3001
-- Exports logs to `packets.json` and `packets.csv` for Wireshark or analysis
-
-#### How to Use (Windows)
-1. Install Python and Scapy:
-   ```sh
-   pip install scapy
-   ```
-2. Install Npcap: [https://nmap.org/npcap/](https://nmap.org/npcap/)
-   - Run installer as Administrator
-   - Check "Install Npcap in WinPcap API-compatible Mode"
-   - Restart your computer
-3. Run sniffer as Administrator:
-   ```sh
-   python network_sniffer.py
-   ```
-4. Press Ctrl+C to stop and export logs
-
-#### Troubleshooting
-- If you see errors about WinPcap/Npcap or "Sniffing and sending packets is not available at layer 2":
-  - Ensure Npcap is installed
-  - Run terminal as Administrator
-  - Restart your computer
 
 ---
 
@@ -107,35 +78,25 @@ npm run dev
 
 ---
 
-## Switching Between WebSocket and WebRTC Modes
-
-### WebSocket Mode (Default)
-- The server and client use Socket.io for all real-time communication
-- No changes needed; this is the default setup
-
-### WebRTC Mode (Optional/Advanced)
-- To enable peer-to-peer networking, you must:
-  1. Implement WebRTC signaling (using Socket.io or a separate signaling server)
-  2. Update the frontend to use WebRTC DataChannels for player movement/chat
-  3. (Optional) Add a toggle in the UI to switch between WebSocket and WebRTC
-- **Note:** WebRTC mode is not implemented by default in this scaffold, but the codebase is modular and ready for extension. See [Simple WebRTC Signaling Example](https://github.com/webrtc/samples) for reference.
+## Notes
+- This repository is cleaned to the essentials: Node/Express Socket.io server and React client.
+- Experimental tools (e.g., external sniffers, Replit, WebRTC prototypes) have been removed. Future additions can be reintroduced as needed.
 
 ---
 
 ## Project Structure
 ```
 V3MazingGameServer/
-├── client/         # React + Vite frontend
+├── client/             # React + Vite frontend
 │   ├── src/
 │   ├── public/
 │   ├── index.html
 │   └── ...
-├── server/         # Node.js backend (inside client/server)
+├── client/server/     # Node.js backend (Express + Socket.io)
 │   ├── index.js
 │   ├── dashboard.html
 │   ├── package.json
 │   └── ...
-├── network_sniffer.py  # Python packet sniffer (optional)
 └── README.md
 ```
 
@@ -144,8 +105,8 @@ V3MazingGameServer/
 ## Credits
 - Maze generation: DFS algorithm
 - Real-time networking: Socket.io
-- Packet capture: Scapy, Npcap, D3.js
-- UI: React, Vite, D3.js
+- Dashboard charts: D3.js
+- UI: React, Vite
 
 ---
 
