@@ -1,16 +1,14 @@
-# Multiplayer Web Maze Game with Network Traffic Inspection
+# Multiplayer Web Maze Game (P2P WebRTC)
 
-A university networking project: Multiplayer Web Maze Game with built-in network traffic inspection, real-time dashboard, and chat.
+A university networking project: Multiplayer Web Maze Game using pure Peer-to-Peer networking over WebRTC DataChannels, with Socket.io used only for signaling.
 
 ---
 
 ## Features
-- Multiplayer maze game (Node.js + Express + Socket.io + React)
-- Real-time player movement and chat
-- Built-in network traffic logger and dashboard (`/dashboard`)
-- Easy deployment (local or cloud VPS)
-- Clean setup: only server + client needed
-- Optional P2P mode using WebRTC DataChannels (server used only for signaling)
+- P2P-only maze game (Node.js + Express + Socket.io signaling + React)
+- Real-time player movement and chat via WebRTC DataChannels
+- Server is signaling-only (no game state, no packet logging, no dashboard)
+- Clean setup: signaling server + client
 
 ---
 
@@ -34,13 +32,12 @@ cd client
 npm install
 ```
 
-### 3. Run the Server (Signaling + Server Mode)
+### 3. Run the Signaling Server
 ```
 cd client/server
 node index.js
 ```
-- The backend runs on [http://localhost:3001](http://localhost:3001)
-- The dashboard is at [http://localhost:3001/dashboard](http://localhost:3001/dashboard)
+- The signaling server runs on [http://localhost:3001](http://localhost:3001)
 
 ### 4. Run the Frontend
 ```
@@ -48,28 +45,32 @@ cd ../
 npm run dev
 ```
 - The frontend runs on [http://localhost:5173](http://localhost:5173)
-- Open multiple browser tabs/windows at [http://localhost:5173](http://localhost:5173)
-- On startup, choose a mode:
-  - "Server Mode (Socket.io)" = original server-authoritative gameplay
-  - "P2P Mode (WebRTC)" = peers connect directly using a DataChannel
-- For P2P, ensure both browsers use the same `room id` (e.g., `room1`).
+- Open two browser tabs/windows at [http://localhost:5173](http://localhost:5173)
+- Ensure both browsers use the same `room id` (e.g., `room1`).
 
----
+### 5. Configure Signaling URL (optional)
+The frontend reads the Socket.io signaling URL from `VITE_SOCKET_URL`. If not set, it defaults to `http://localhost:3001`.
 
-## Network Traffic Capture
+Create `client/.env.local` to override:
 
-### Option 1: Built-in Logger & Dashboard
-- All WebSocket events (connect, move, chat, disconnect) are logged in memory and visible at [http://localhost:3001/dashboard](http://localhost:3001/dashboard)
-- Table and D3.js chart auto-update in real time
-- For exporting, you can extend the `/packets` endpoint to download logs as JSON/CSV
+```
+VITE_SOCKET_URL=http://localhost:3001
+```
+
+Examples:
+- Local default: `VITE_SOCKET_URL=http://localhost:3001`
+- Public IP (port-forwarded): `VITE_SOCKET_URL=http://YOUR_PUBLIC_IP:3001`
+- ngrok HTTPS: `VITE_SOCKET_URL=https://YOUR-NGROK-SUBDOMAIN.ngrok.io`
+
+Restart `npm run dev` after changing the env file.
 
 ---
 
 ## Deployment
 
 ### Local/Private Server
-- Run the backend (`node index.js`) on any machine in your LAN
-- Update the frontend to point to the server's IP (edit `socket = io('http://<server-ip>:3001')` in `client/src/App.jsx`)
+- Run the signaling server (`node index.js`) on any machine in your LAN
+- Update the frontend to point to the server's IP using `VITE_SOCKET_URL`
 - Open firewall port 3001 (TCP)
 - Clients on the same network can connect via browser
 
@@ -82,38 +83,92 @@ npm run dev
 
 ---
 
-## Notes
-- This repository is cleaned to the essentials: Node/Express Socket.io server and React client.
-- Experimental tools (e.g., external sniffers, Replit, WebRTC prototypes) have been removed. Future additions can be reintroduced as needed.
+## P2P Mode Tutorial (WebRTC)
+
+In this project, gameplay is fully P2P. The server is used only for signaling (no game state on the server).
+
+### Signaling events
+- `joinRoom`: peers join the same room id
+- `offer` / `answer`: exchange SDP session descriptions
+- `iceCandidate`: exchange ICE candidates
+
+After signaling completes, the DataChannel `game-data` opens and all messages are exchanged directly between peers.
+
+### Try it locally
+1. Start the signaling server: `cd client/server && node index.js`
+2. Start the frontend: `cd client && npm run dev`
+3. Open two browser tabs at `http://localhost:5173`
+4. Enter the same `room id` in both tabs (e.g., `room1`)
+5. In tab A, click `Create Room (Peer A)`; in tab B, click `Join Room (Peer B)`
+6. Watch the status messages:
+   - Peer A: "Room created. Waiting for Peer to join..." → "Peer joined. Sending offer..." → "P2P DataChannel open"
+   - Peer B: "Joined room. Waiting for offer..." → "Sent answer. Establishing connection..." → "P2P DataChannel open"
+7. Use arrow keys/WASD and chat — updates flow peer-to-peer over the DataChannel.
+
+If peers are on different networks, set `client/.env.local` to point `VITE_SOCKET_URL` to a reachable signaling server (public IP or ngrok HTTPS URL) and restart `npm run dev`.
 
 ---
 
-## P2P Mode (WebRTC)
+## Invite a Friend (No Local Files on Friend)
 
-In P2P mode, the server acts only as a signaling server; once connected, game data (movement, chat, optional state sync) flows directly between browsers via a WebRTC DataChannel.
+You can share your running development frontend via ngrok so your friend only needs a browser. This project auto-connects peers (no rooms). One peer will create an offer when a second peer opens the page.
 
-### How it works
-- Signaling uses Socket.io events:
-  - `join_room` — peers join the same room id
-  - `webrtc-offer` / `webrtc-answer` — exchange SDP session descriptions
-  - `webrtc-ice` — exchange ICE candidates
-- After signaling completes, the DataChannel `game` opens and messages are exchanged directly between peers.
+### Step-by-step
+1. Start the signaling server locally
+   - Terminal A
+   - `cd client/server && node index.js`
 
-### Try it locally
-1. Start the backend signaling server: `cd client/server && node index.js`
-2. Start the frontend: `cd client && npm run dev`
-3. Open two browser tabs at `http://localhost:5173`
-4. In both tabs, select P2P Mode, and keep the same `room id` (e.g., `room1`)
-5. Use arrow keys/WASD and chat — updates flow peer-to-peer
+2. Expose the signaling server with ngrok (HTTPS)
+   - Terminal B
+   - `ngrok http 3001`
+   - Copy the HTTPS URL shown by ngrok, e.g. `https://YOUR-SIGNALING.ngrok-free.dev`
 
-### Server Mode vs P2P Mode
-- Server Mode (default behavior):
-  - The server maintains authoritative player positions
-  - Clients emit `move`/`chat` via Socket.io, the server rebroadcasts state
-- P2P Mode:
-  - The server only relays signaling messages
-  - After the WebRTC connection is established, peers send `move` and `chat` directly over the DataChannel
-  - The maze is fetched from `GET /maze` at startup
+3. Point the frontend to that signaling URL
+   - File: `client/.env.local`
+   - Set:
+     ```dotenv
+     VITE_SOCKET_URL=https://YOUR-SIGNALING.ngrok-free.dev
+     ```
+   - Restart dev server whenever you change this file.
+
+4. Allow your frontend ngrok host in Vite and bind host
+   - File: `client/vite.config.js`
+     ```js
+     export default defineConfig({
+       plugins: [react()],
+       server: {
+         host: true,
+         allowedHosts: [
+           'YOUR-SIGNALING.ngrok-free.dev',   // signaling tunnel
+           'YOUR-FRONTEND.ngrok-free.app',    // add after you get the frontend tunnel URL
+         ],
+         port: 5173,
+       },
+     })
+     ```
+
+5. Run the frontend and expose it with ngrok
+   - Terminal C (frontend)
+   - `cd client && npm run dev -- --host 0.0.0.0`
+   - Terminal D (frontend tunnel)
+   - `ngrok http 5173`
+   - Copy the HTTPS URL shown by ngrok, e.g. `https://YOUR-FRONTEND.ngrok-free.app`
+   - Add this host to `allowedHosts` (step 4) if you see "host not allowed", then restart `npm run dev`.
+
+6. Send your friend ONLY the frontend ngrok URL
+   - Example: `https://YOUR-FRONTEND.ngrok-free.app`
+   - Keep both ngrok windows (signaling + frontend) running.
+
+### What your friend does
+- Open the frontend URL you sent.
+- The app auto-connects. When the friend opens the page, your browser receives `peerJoined` and sends the WebRTC offer.
+- Status will show "P2P DataChannel open" on both sides when connected.
+- Use the chat box to exchange messages peer-to-peer.
+
+### Tips
+- If you see "Blocked request. This host is not allowed", add the frontend ngrok domain to `server.allowedHosts` in `client/vite.config.js` and restart `npm run dev`.
+- If ngrok rotates URLs, update `VITE_SOCKET_URL` and `allowedHosts`, restart `npm run dev`, and share the new frontend URL.
+- HTTPS frontend requires HTTPS signaling (ngrok provides this).
 
 ---
 
@@ -125,9 +180,8 @@ V3MazingGameServer/
 │   ├── public/
 │   ├── index.html
 │   └── ...
-├── client/server/     # Node.js backend (Express + Socket.io)
+├── client/server/     # Node.js signaling server (Express + Socket.io)
 │   ├── index.js
-│   ├── dashboard.html
 │   ├── package.json
 │   └── ...
 └── README.md

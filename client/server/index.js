@@ -58,122 +58,27 @@ function generateMaze(width, height) {
 
 const MAZE_WIDTH = 15;
 const MAZE_HEIGHT = 10;
-let maze = generateMaze(MAZE_WIDTH, MAZE_HEIGHT);
-
-// Player state
-const players = {};
-
-// In-memory packet log for dashboard
-const PACKET_LOG = [];
 
 app.get('/', (req, res) => {
   res.send('Maze Game Server is running!');
 });
 
-// Expose the current maze to P2P clients (read-only)
-app.get('/maze', (req, res) => {
-  res.json({ maze, width: MAZE_WIDTH, height: MAZE_HEIGHT });
-});
-
-let PACKET_COUNTER = 0;
-
-// Add a function to emit packet logs to all clients
-function emitPacketLog(type, data, socketId, latency=null) {
-  const log = {
-    sequence: ++PACKET_COUNTER,
-    timestamp: Date.now(),
-    type,
-    data,
-    socketId,
-    protocol: 'WebSocket',
-    src: socketId,
-    dst: 'server',
-    size: JSON.stringify(data).length,
-    latency
-  };
-  io.emit('packet', log);
-  PACKET_LOG.push(log);
-  if (PACKET_LOG.length > 500) PACKET_LOG.shift();
-}
-
-// Serve dashboard HTML
-app.get('/dashboard', (req, res) => {
-  res.sendFile(require('path').join(__dirname, 'dashboard.html'));
-});
-
-// Serve packets as JSON
-app.get('/packets', (req, res) => {
-  res.json(PACKET_LOG);
-});
-
-// --- Socket.io: Signaling + Server Mode in one connection handler ---
-// Minimal WebRTC signaling (room-based) + existing authoritative server mode.
+// --- Socket.io: Minimal WebRTC signaling (no rooms, auto-pair) ---
+// On connect, notify existing peers so one of them can initiate the offer.
+// Relay offer/answer/iceCandidate by broadcasting to all other sockets.
 io.on('connection', (socket) => {
-  // Signaling: join a room for P2P WebRTC
-  socket.on('join_room', (roomId) => {
-    socket.join(roomId);
-    socket.to(roomId).emit('peer_joined', { peerId: socket.id });
+  // Let the already-connected peer(s) know someone joined
+  socket.broadcast.emit('peerJoined', { peerId: socket.id });
+
+  // Relay SDP offer/answer and ICE candidates to the other peer(s)
+  socket.on('offer', ({ sdp }) => {
+    socket.broadcast.emit('offer', { from: socket.id, sdp });
   });
-
-  // Signaling: forward SDP and ICE between peers in the same room
-  socket.on('webrtc-offer', ({ roomId, sdp }) => {
-    socket.to(roomId).emit('webrtc-offer', { from: socket.id, sdp });
+  socket.on('answer', ({ sdp }) => {
+    socket.broadcast.emit('answer', { from: socket.id, sdp });
   });
-  socket.on('webrtc-answer', ({ roomId, sdp }) => {
-    socket.to(roomId).emit('webrtc-answer', { from: socket.id, sdp });
-  });
-  socket.on('webrtc-ice', ({ roomId, candidate }) => {
-    socket.to(roomId).emit('webrtc-ice', { from: socket.id, candidate });
-  });
-
-  // --- Authoritative server mode events ---
-  // Assign player to start position (0,0)
-  players[socket.id] = { x: 0, y: 0, id: socket.id };
-  // Send maze and all player positions
-  socket.emit('maze', { maze, width: MAZE_WIDTH, height: MAZE_HEIGHT });
-  io.emit('players', players);
-  emitPacketLog('connect', { player: players[socket.id] }, socket.id);
-
-  socket.on('move', (msg) => {
-    const { dir, sentAt } = typeof msg === 'string' ? { dir: msg, sentAt: null } : msg;
-    let latency = sentAt ? Date.now() - sentAt : null;
-
-    // Se a latência for negativa, zera
-    if (latency !== null && latency < 0) latency = 0;
-
-    const player = players[socket.id];
-    if (!player) return;
-    const { x, y } = player;
-    const cell = maze[y][x];
-    let nx = x, ny = y;
-    if (dir === 'up' && !cell.top) ny--;
-    if (dir === 'down' && !cell.bottom) ny++;
-    if (dir === 'left' && !cell.left) nx--;
-    if (dir === 'right' && !cell.right) nx++;
-
-    if (nx >= 0 && nx < MAZE_WIDTH && ny >= 0 && ny < MAZE_HEIGHT) {
-      player.x = nx;
-      player.y = ny;
-      io.emit('players', players);
-    }
-
-    emitPacketLog('move', { dir, player: { ...player } }, socket.id, latency);
-  });
-
-  socket.on('chat', (msg) => {
-    const chatMsg = {
-      id: socket.id,
-      text: msg,
-      time: Date.now(),
-    };
-    io.emit('chat', chatMsg);
-    emitPacketLog('chat', chatMsg, socket.id);
-  });
-
-  socket.on('disconnect', () => {
-    emitPacketLog('disconnect', { player: players[socket.id] }, socket.id);
-    delete players[socket.id];
-    io.emit('players', players);
+  socket.on('iceCandidate', ({ candidate }) => {
+    socket.broadcast.emit('iceCandidate', { from: socket.id, candidate });
   });
 });
 
